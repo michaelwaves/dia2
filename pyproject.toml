@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dia2"
 version = "0.1.0"
-description = "Dia2 CUDA-only text-to-speech runtime"
+description = "Dia2 ROCm text-to-speech runtime"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 authors = [{ name = "Dia Contributors" }]
 license = { file = "LICENSE" }
 dependencies = [
@@ -32,13 +32,15 @@ dev = [
 package = true
 
 [tool.uv.sources]
+# Only Linux supports ROCm; macOS/Windows should use normal PyPI torch.
 torch = [
-  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+  { index = "pytorch-rocm", marker = "sys_platform == 'linux'" }
 ]
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-rocm"
+# Use ROCm 7.0 nightly build (recommended)
+url = "https://download.pytorch.org/whl/nightly/rocm7.0"
 explicit = true
 
 [tool.setuptools]
