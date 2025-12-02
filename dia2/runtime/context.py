@@ -37,10 +37,10 @@ def load_file_into_model(
             The device where the tensors need to be located after load.
 
     Example:
-    ```python
+```python
     model = MyModel()
     load_file_into_model(model, "./my_folder/bert.safetensors", device="cuda")
-    ```
+```
     """
     state_dict = model.state_dict() # This is a shallow copy.
     with safe_open(filename, framework="pt", device=device) as f:
@@ -66,6 +66,51 @@ class RuntimeContext:
     frame_rate: float
 
 
+def _configure_gpu_backend(device_obj: torch.device) -> None:
+    """
+    Configure GPU backend optimizations for CUDA or ROCm.
+    
+    For NVIDIA CUDA: Enables TF32 for faster computation on Ampere+ GPUs
+    For AMD ROCm: No special configuration needed (uses standard FP32 or mixed precision)
+    """
+    if device_obj.type != "cuda":
+        return
+    
+    # Check if we're using ROCm (AMD) or CUDA (NVIDIA)
+    is_rocm = torch.version.hip is not None
+    
+    if is_rocm:
+        # ROCm backend - no TF32 support, uses standard FP32 or mixed precision
+        # Future ROCm-specific optimizations can be added here
+        return
+    
+    # NVIDIA CUDA backend - configure TF32
+    cuda_matmul = torch.backends.cuda.matmul
+    cudnn_conv = torch.backends.cudnn.conv
+    
+    if hasattr(cuda_matmul, "fp32_precision"):
+        cuda_matmul.fp32_precision = "tf32"
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Please use the new API settings",
+            )
+            torch.backends.cuda.matmul.allow_tf32 = True
+    else:  # pragma: no cover - compatibility with older PyTorch
+        torch.backends.cuda.matmul.allow_tf32 = True
+    
+    if hasattr(cudnn_conv, "fp32_precision"):
+        cudnn_conv.fp32_precision = "tf32"
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Please use the new API settings",
+            )
+            torch.backends.cudnn.allow_tf32 = True
+    else:  # pragma: no cover
+        torch.backends.cudnn.allow_tf32 = True
+
+
 def build_runtime(
     *,
     config_path: str | Path,
@@ -77,29 +122,10 @@ def build_runtime(
     dtype_pref: str,
 ) -> tuple[RuntimeContext, str, str]:
     device_obj = torch.device(device)
-    if device_obj.type == "cuda":
-        cuda_matmul = torch.backends.cuda.matmul
-        cudnn_conv = torch.backends.cudnn.conv
-        if hasattr(cuda_matmul, "fp32_precision"):
-            cuda_matmul.fp32_precision = "tf32"
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="Please use the new API settings",
-                )
-                torch.backends.cuda.matmul.allow_tf32 = True
-        else:  # pragma: no cover - compatibility with older PyTorch
-            torch.backends.cuda.matmul.allow_tf32 = True
-        if hasattr(cudnn_conv, "fp32_precision"):
-            cudnn_conv.fp32_precision = "tf32"
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message="Please use the new API settings",
-                )
-                torch.backends.cudnn.allow_tf32 = True
-        else:  # pragma: no cover
-            torch.backends.cudnn.allow_tf32 = True
+    
+    # Configure GPU backend optimizations (CUDA or ROCm)
+    _configure_gpu_backend(device_obj)
+    
     precision = resolve_precision(dtype_pref, device_obj)
     config = load_config(config_path)
     model = Dia2Model(config, precision, device=device_obj)
